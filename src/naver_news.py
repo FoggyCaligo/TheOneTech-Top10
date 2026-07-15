@@ -17,13 +17,46 @@ NAVER_NEWS_URL = "https://openapi.naver.com/v1/search/news.json"
 _TAG_RE = re.compile(r"<[^>]+>")
 KST = timezone(timedelta(hours=9))
 
+# 네이버 뉴스 검색 API는 언론사 조건을 지원하지 않으므로 originallink 도메인으로 후처리한다.
+DEFAULT_MAJOR_PUBLISHER_DOMAINS = (
+    "yna.co.kr",          # 연합뉴스
+    "newsis.com",         # 뉴시스
+    "news1.kr",           # 뉴스1
+    "kbs.co.kr",          # KBS
+    "imnews.imbc.com",    # MBC 뉴스
+    "imbc.com",           # MBC 계열 링크 보완
+    "sbs.co.kr",          # SBS
+    "ytn.co.kr",          # YTN
+    "jtbc.co.kr",         # JTBC
+    "tvchosun.com",       # TV조선
+    "mbn.co.kr",          # MBN
+    "channela.com",       # 채널A
+    "chosun.com",         # 조선일보
+    "joongang.co.kr",     # 중앙일보
+    "donga.com",          # 동아일보
+    "hani.co.kr",         # 한겨레
+    "khan.co.kr",         # 경향신문
+    "hankookilbo.com",    # 한국일보
+    "kmib.co.kr",         # 국민일보
+    "munhwa.com",         # 문화일보
+    "segye.com",          # 세계일보
+    "seoul.co.kr",        # 서울신문
+    "mk.co.kr",           # 매일경제
+    "hankyung.com",       # 한국경제
+    "sedaily.com",        # 서울경제
+    "asiae.co.kr",        # 아시아경제
+    "edaily.co.kr",       # 이데일리
+    "fnnews.com",         # 파이낸셜뉴스
+    "heraldcorp.com",     # 헤럴드경제
+)
+
 
 @dataclass(frozen=True)
 class NaverNewsConfig:
     client_id: str
     client_secret: str
     queries: tuple[str, ...]
-    publisher_domains: tuple[str, ...] = ()
+    publisher_domains: tuple[str, ...] = DEFAULT_MAJOR_PUBLISHER_DOMAINS
     page_size: int = 100
     max_results_per_query: int = 1000
     timeout_seconds: int = 20
@@ -44,11 +77,19 @@ class NaverNewsConfig:
         if not queries:
             raise ValueError("NEWS_QUERIES에 검색어를 하나 이상 설정해 주세요.")
 
-        domains = tuple(
-            value.lower().strip().removeprefix("www.")
-            for value in os.getenv("NEWS_PUBLISHER_DOMAINS", "").split(",")
-            if value.strip()
+        raw_domains = os.getenv("NEWS_PUBLISHER_DOMAINS", "").strip()
+        domains = (
+            tuple(
+                value.lower().strip().removeprefix("www.")
+                for value in raw_domains.split(",")
+                if value.strip()
+            )
+            if raw_domains
+            else DEFAULT_MAJOR_PUBLISHER_DOMAINS
         )
+        if not domains:
+            raise ValueError("메이저 언론사 필터가 비어 있습니다. NEWS_PUBLISHER_DOMAINS를 확인해 주세요.")
+
         return cls(
             client_id=client_id,
             client_secret=client_secret,
@@ -77,7 +118,7 @@ def normalize_domain(url: str) -> str:
 def domain_allowed(url: str, allowed_domains: Iterable[str]) -> bool:
     allowed = tuple(allowed_domains)
     if not allowed:
-        return True
+        return False
     domain = normalize_domain(url)
     return any(domain == item or domain.endswith(f".{item}") for item in allowed)
 
