@@ -37,7 +37,7 @@ def test_prepare_articles_rejects_missing_columns():
 
 def test_label_quality_penalizes_generic_topic_terms():
     assert _label_quality("비트코인 · 가상화폐 · 거래소") == 1.0
-    assert _label_quality("서울 · 기자 · 사진 · 있다") == 0.0
+    assert _label_quality("기자 · 사진 · 있다") == 0.0
 
 
 def test_issue_score_discounts_loose_or_generic_clusters():

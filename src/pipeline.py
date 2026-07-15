@@ -14,7 +14,6 @@ from sklearn.metrics.pairwise import cosine_similarity
 GENERIC_TOPIC_TERMS = {
     "기자",
     "사진",
-    "서울",
     "전국",
     "오전",
     "오후",
@@ -146,7 +145,7 @@ def _label_quality(topic_name: str) -> float:
 
 
 def _issue_score(article_count: int, cohesion_score: float, label_quality: float) -> float:
-    # Noisy labels such as "서울 · 기자 · 사진" should not outrank real issue clusters
+    # Noisy labels such as "기자 · 사진" should not outrank real issue clusters
     # merely because they are large.
     if label_quality <= 0:
         return 0.0
