@@ -45,6 +45,7 @@ def test_issue_score_discounts_loose_or_generic_clusters():
     noisy = _issue_score(article_count=100, cohesion_score=0.3, label_quality=0.0)
 
     assert strong > noisy
+    assert noisy == 0
 
 
 def test_remove_near_duplicates_drops_identical_long_body_even_with_different_titles():

@@ -146,9 +146,12 @@ def _label_quality(topic_name: str) -> float:
 
 
 def _issue_score(article_count: int, cohesion_score: float, label_quality: float) -> float:
-    # Size remains the main signal, but generic/noisy labels and loose clusters are discounted.
-    cohesion_factor = 0.5 + 0.5 * cohesion_score
-    label_factor = 0.65 + 0.35 * label_quality
+    # Noisy labels such as "서울 · 기자 · 사진" should not outrank real issue clusters
+    # merely because they are large.
+    if label_quality <= 0:
+        return 0.0
+    cohesion_factor = max(cohesion_score, 0.0) ** 1.5
+    label_factor = label_quality ** 3
     return round(article_count * cohesion_factor * label_factor, 4)
 
 

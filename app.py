@@ -30,9 +30,9 @@ configured_queries = [
 with st.sidebar:
     st.header("분석 설정")
     top_n = st.number_input("Top N 이슈 수", min_value=1, max_value=50, value=10, step=1)
-    min_cluster_size = st.slider("최소 군집 기사 수", 3, 50, 20)
+    min_cluster_size = st.slider("최소 군집 기사 수", 3, 50, 30)
     duplicate_threshold = st.slider(
-        "중복 판정 유사도", 0.85, 0.995, 0.96, step=0.005
+        "중복 판정 유사도", 0.85, 0.995, 0.85, step=0.005
     )
     st.divider()
     st.metric("DB 전체 기사", f"{database.count():,}개")

@@ -73,16 +73,18 @@ Top N 표는 단순 기사 수만으로 정렬하지 않습니다. 현재 순위
 
 ```text
 issue_score = article_count × cohesion_factor × label_factor
-cohesion_factor = 0.5 + 0.5 × cohesion_score
-label_factor = 0.65 + 0.35 × label_quality
+cohesion_factor = cohesion_score ^ 1.5
+label_factor = label_quality ^ 3
 ```
 
 - `article_count`: 해당 군집의 기사 수입니다.
 - `cohesion_score`: 군집 안 기사 임베딩이 중심점에 얼마나 가깝게 모였는지입니다. 1에 가까울수록 응집도가 높습니다.
 - `label_quality`: 군집 라벨에 `기자`, `사진`, `서울`, `있다` 같은 일반어가 적을수록 높습니다.
-- `issue_score`: 크지만 잡음이 많은 군집은 낮추고, 조금 작아도 응집도와 라벨 품질이 좋은 군집은 올리기 위한 최종 점수입니다.
+- `issue_score`: 크지만 잡음이 많은 군집은 강하게 낮추고, 조금 작아도 응집도와 라벨 품질이 좋은 군집은 올리기 위한 최종 점수입니다. `label_quality`가 0이면 점수도 0입니다.
 
-표의 `rank`는 `issue_score`, `article_count`, `cohesion_score` 순으로 정렬해 부여합니다. 지도 범례의 순서는 Plotly가 데이터에서 주제를 만나는 순서에 가까우므로 공식 순위로 해석하면 안 됩니다.
+표의 `rank`는 `issue_score`, `article_count`, `cohesion_score` 순으로 정렬해 부여합니다. 지도 범례는 Top N 표와 같은 rank 포함 라벨을 사용합니다. Top N 밖의 군집은 지도에서 `Top N 외 군집`으로 표시됩니다.
+
+분석은 토픽 단위가 아니라 기사 단위로 시작합니다. 각 기사마다 `title + body` 임베딩을 만든 뒤, 기사끼리 의미적으로 가까운 것들을 HDBSCAN으로 군집화합니다. 토픽명은 군집이 만들어진 뒤 TF-IDF 키워드로 붙이는 후처리 라벨입니다.
 
 ## 해석상 주의
 
