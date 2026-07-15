@@ -387,7 +387,6 @@ def analyze_articles(
     model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
     min_cluster_size: int = 5,
     duplicate_threshold: float = 0.96,
-    merge_threshold: float = 0.72,
     subcluster_outlier_threshold: float = 0.45,
     title_col: str = "title",
     body_col: str = "body",
@@ -439,11 +438,7 @@ def analyze_articles(
     )
 
     articles["subcluster"] = labels.astype(int)
-    articles["cluster"] = merge_subclusters(
-        articles,
-        embeddings,
-        threshold=merge_threshold,
-    ).to_numpy()
+    articles["cluster"] = articles["subcluster"]
     articles["x"] = coordinates[:, 0]
     articles["y"] = coordinates[:, 1]
 
