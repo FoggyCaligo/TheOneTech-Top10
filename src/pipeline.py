@@ -8,7 +8,6 @@ import hdbscan
 import numpy as np
 import pandas as pd
 import umap
-from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -73,7 +72,7 @@ def _topic_keywords(texts: Iterable[str], top_n: int = 5) -> str:
             ngram_range=(1, 2),
             max_features=3000,
             min_df=1,
-            token_pattern=r"(?u)\b[가-힣A-Za-z0-9]{2,}\b",
+            token_pattern=r"(?u)[가-힣A-Za-z0-9]{2,}",
         )
         matrix = vectorizer.fit_transform(values)
         scores = np.asarray(matrix.mean(axis=0)).ravel()
@@ -93,6 +92,8 @@ def analyze_articles(
     title_col: str = "title",
     body_col: str = "body",
 ) -> AnalysisResult:
+    from sentence_transformers import SentenceTransformer
+
     articles = prepare_articles(frame, title_col=title_col, body_col=body_col)
 
     model = SentenceTransformer(model_name)
@@ -119,9 +120,10 @@ def analyze_articles(
     )
     coordinates = reducer.fit_transform(embeddings)
 
+    effective_min_cluster_size = min(min_cluster_size, max(2, len(articles) // 2))
     clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=min(min_cluster_size, max(2, len(articles) // 2)),
-        min_samples=max(2, min_cluster_size // 2),
+        min_cluster_size=effective_min_cluster_size,
+        min_samples=max(1, effective_min_cluster_size // 2),
         metric="euclidean",
         cluster_selection_method="eom",
         prediction_data=True,

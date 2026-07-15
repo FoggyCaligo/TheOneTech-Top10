@@ -8,4 +8,5 @@ venv/
 outputs/
 data/*.db
 data/*.db-*
+streamlit*.log
 .DS_Store

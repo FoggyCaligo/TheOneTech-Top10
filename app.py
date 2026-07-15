@@ -8,6 +8,8 @@ import plotly.express as px
 import streamlit as st
 from dotenv import load_dotenv
 
+from src.bigkinds_csv import bigkinds_download_path, load_bigkinds_download, normalize_bigkinds_csv
+from src.bigkinds_news import BigKindsConfig, BigKindsNewsClient
 from src.database import ArticleDatabase
 from src.naver_news import NaverNewsClient, NaverNewsConfig
 from src.pipeline import analyze_articles
@@ -17,7 +19,7 @@ load_dotenv()
 st.set_page_config(page_title="TheOneTech Top 10", layout="wide")
 st.title("지역 뉴스 이슈 Top 10")
 st.caption(
-    "네이버 뉴스 검색 API 결과를 SQLite에 누적하고, 선택 기간의 기사를 의미 유사도로 군집화합니다."
+    "빅카인즈 API, 네이버 API+DB, 빅카인즈 다운로드 파일 중 하나를 선택해 지역 뉴스 이슈를 군집화합니다."
 )
 
 database = ArticleDatabase()
@@ -27,6 +29,7 @@ configured_queries = [
 
 with st.sidebar:
     st.header("분석 설정")
+    top_n = st.number_input("Top N 이슈 수", min_value=1, max_value=50, value=10, step=1)
     min_cluster_size = st.slider("최소 군집 기사 수", 3, 30, 5)
     duplicate_threshold = st.slider(
         "중복 판정 유사도", 0.85, 0.995, 0.96, step=0.005
@@ -38,71 +41,137 @@ with st.sidebar:
         st.dataframe(monthly, use_container_width=True, hide_index=True)
 
 source = st.radio(
-    "기사 입력 방식",
-    ["SQLite DB", "네이버 API 수집", "CSV 업로드"],
+    "기사 소스",
+    ["빅카인즈 API", "네이버 API + DB", "빅카인즈 다운로드 파일"],
     horizontal=True,
 )
 data: pd.DataFrame | None = None
 
-if source in {"SQLite DB", "네이버 API 수집"}:
-    col1, col2 = st.columns(2)
+if source == "빅카인즈 다운로드 파일":
+    use_file_date_filter = st.checkbox("파일 내부 기사에 기간 필터 적용", value=False)
+else:
+    use_file_date_filter = True
+
+if use_file_date_filter:
+    col1, col2, col3 = st.columns([1, 1, 1.4])
     start_date = col1.date_input("시작일", value=date.today() - timedelta(days=30))
     end_date = col2.date_input("종료일", value=date.today())
-    selected_queries = st.multiselect(
-        "검색어",
+    selected_queries = col3.multiselect(
+        "지역",
         options=configured_queries,
         default=configured_queries,
-        help="검색어 목록은 .env의 NEWS_QUERIES에서 설정합니다.",
+        help="지역 목록은 .env의 NEWS_QUERIES에서 설정합니다.",
     )
+else:
+    col1, col2 = st.columns([1.2, 2])
+    selected_queries = col1.multiselect(
+        "지역",
+        options=configured_queries,
+        default=configured_queries,
+        help="파일 전체에서 선택 지역만 필터링합니다.",
+    )
+    col2.info("기간 필터를 적용하지 않고 빅카인즈 다운로드 파일 전체를 사용합니다.")
+    start_date = date.min
+    end_date = date.max
 
-    if source == "네이버 API 수집":
-        st.warning(
-            "네이버 API에는 기간 필터가 없어 날짜순 결과를 순회한 뒤 프로그램에서 기간을 거릅니다. "
-            "검색어당 최대 1,000건까지만 접근할 수 있으므로 장기간 일괄 수집보다 매일 증분 수집을 권장합니다."
-        )
-        if st.button("API에서 수집해 DB에 저장", type="primary", use_container_width=True):
-            try:
-                config = NaverNewsConfig.from_env()
-                if selected_queries:
-                    config = NaverNewsConfig(
-                        client_id=config.client_id,
-                        client_secret=config.client_secret,
-                        queries=tuple(selected_queries),
-                        publisher_domains=config.publisher_domains,
-                        page_size=config.page_size,
-                        max_results_per_query=config.max_results_per_query,
-                        timeout_seconds=config.timeout_seconds,
-                        request_delay_seconds=config.request_delay_seconds,
-                    )
-                with st.spinner("네이버 뉴스 API 수집 중..."):
-                    collected = NaverNewsClient(config).collect(start_date, end_date)
-                    inserted = database.upsert_dataframe(collected)
-                    deleted = database.enforce_retention()
-                st.success(
-                    f"API 결과 {len(collected):,}개, 신규 저장 {inserted:,}개, "
-                    f"1년 초과 삭제 {deleted:,}개"
+if source == "빅카인즈 API":
+    st.info(
+        "빅카인즈 API는 기간 조건을 요청에 직접 반영합니다. "
+        ".env에 BIGKINDS_ACCESS_KEY를 설정해야 합니다."
+    )
+    if st.button("빅카인즈 API에서 수집", type="primary", use_container_width=True):
+        try:
+            config = BigKindsConfig.from_env()
+            if selected_queries:
+                config = BigKindsConfig(
+                    access_key=config.access_key,
+                    queries=tuple(selected_queries),
+                    endpoint=config.endpoint,
+                    page_size=config.page_size,
+                    max_results_per_query=config.max_results_per_query,
+                    timeout_seconds=config.timeout_seconds,
                 )
-            except Exception as exc:
-                st.error(str(exc))
+            with st.spinner("빅카인즈 API 수집 중..."):
+                data = BigKindsNewsClient(config).collect(start_date, end_date)
+                st.session_state["bigkinds_api_data"] = data
+            st.success(f"빅카인즈 API 결과: {len(data):,}개")
+        except Exception as exc:
+            st.error(str(exc))
+    else:
+        data = st.session_state.get("bigkinds_api_data")
+        if data is not None:
+            st.write(f"최근 빅카인즈 API 결과: **{len(data):,}개**")
+
+elif source == "네이버 API + DB":
+    st.warning(
+        "네이버 API에는 기간 필터가 없어 최신 결과를 조회한 뒤 프로그램에서 기간을 거릅니다. "
+        "검색어당 최대 1,000건까지만 접근할 수 있으므로 장기 수집은 매일 증분 수집을 권장합니다."
+    )
+    if st.button("네이버 API에서 수집해 DB에 저장", type="primary", use_container_width=True):
+        try:
+            config = NaverNewsConfig.from_env()
+            if selected_queries:
+                config = NaverNewsConfig(
+                    client_id=config.client_id,
+                    client_secret=config.client_secret,
+                    queries=tuple(selected_queries),
+                    publisher_domains=config.publisher_domains,
+                    page_size=config.page_size,
+                    max_results_per_query=config.max_results_per_query,
+                    timeout_seconds=config.timeout_seconds,
+                    request_delay_seconds=config.request_delay_seconds,
+                )
+            with st.spinner("네이버 뉴스 API 수집 중..."):
+                collected = NaverNewsClient(config).collect(start_date, end_date)
+                inserted = database.upsert_dataframe(collected)
+                deleted = database.enforce_retention()
+            st.success(
+                f"네이버 API 결과 {len(collected):,}개, 신규 저장 {inserted:,}개, "
+                f"보존 기간 초과 삭제 {deleted:,}개"
+            )
+        except Exception as exc:
+            st.error(str(exc))
 
     data = database.query(start_date, end_date, selected_queries or None)
     st.write(f"DB 조회 기사: **{len(data):,}개**")
     if not data.empty:
         st.download_button(
-            "조회 결과 CSV 다운로드",
+            "DB 조회 결과 CSV 다운로드",
             data.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"news_{start_date}_{end_date}.csv",
+            file_name=f"news_db_{start_date}_{end_date}.csv",
             mime="text/csv",
             use_container_width=True,
         )
 else:
-    uploaded = st.file_uploader("뉴스기사 CSV 업로드", type=["csv"])
+    input_mode = st.radio("파일 입력 방식", ["기본 경로 사용", "파일 업로드"], horizontal=True)
+    if input_mode == "기본 경로 사용":
+        path = st.text_input(
+            "빅카인즈 다운로드 파일 경로",
+            value=str(bigkinds_download_path()),
+            help="BIGKINDS_DOWNLOAD_PATH 환경 변수로 기본 경로를 바꿀 수 있습니다.",
+        )
+        try:
+            with st.spinner("빅카인즈 다운로드 파일 읽는 중..."):
+                data = load_bigkinds_download(path, start_date, end_date, selected_queries)
+            st.write(f"빅카인즈 다운로드 파일 조회 기사: **{len(data):,}개**")
+        except Exception as exc:
+            st.error(str(exc))
+
+    uploaded = st.file_uploader("빅카인즈 다운로드 파일 업로드", type=["csv", "xlsx", "xls"])
     if uploaded is not None:
         try:
-            data = pd.read_csv(uploaded)
-        except UnicodeDecodeError:
-            uploaded.seek(0)
-            data = pd.read_csv(uploaded, encoding="cp949")
+            if uploaded.name.lower().endswith(".csv"):
+                try:
+                    uploaded_frame = pd.read_csv(uploaded, dtype=str)
+                except UnicodeDecodeError:
+                    uploaded.seek(0)
+                    uploaded_frame = pd.read_csv(uploaded, dtype=str, encoding="cp949")
+            else:
+                uploaded_frame = pd.read_excel(uploaded, dtype=str)
+            data = normalize_bigkinds_csv(uploaded_frame, start_date, end_date, selected_queries)
+            st.write(f"업로드 파일 조회 기사: **{len(data):,}개**")
+        except Exception as exc:
+            st.error(str(exc))
 
 if data is None or data.empty:
     st.info("기사를 수집하거나 DB 조회 기간을 조정하거나 CSV를 올려 주세요.")
@@ -124,16 +193,16 @@ if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
             st.error(str(exc))
             st.stop()
 
-    topics = result.topics.head(10)
+    topics = result.topics.head(int(top_n))
     articles = result.articles
     col1, col2, col3 = st.columns(3)
     col1.metric("분석 기사", f"{len(articles):,}개")
     col2.metric("감지된 군집", f"{len(result.topics):,}개")
     col3.metric("기타/노이즈", f"{int((articles['cluster'] < 0).sum()):,}개")
 
-    st.subheader("기사량 기준 Top 10 이슈")
+    st.subheader(f"기사 수 기준 Top {int(top_n)} 이슈")
     if topics.empty:
-        st.warning("군집이 만들어지지 않았습니다. 최소 군집 기사 수를 낮춰 보세요.")
+        st.warning("군집을 만들지 못했습니다. 최소 군집 기사 수를 낮춰 보세요.")
     else:
         st.dataframe(
             topics[["rank", "topic", "article_count", "share_percent", "representative_title"]],

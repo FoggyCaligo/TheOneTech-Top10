@@ -44,7 +44,7 @@ def test_collect_normalizes_naver_response():
             "items": [
                 {
                     "title": "<b>서울</b> 정책 발표",
-                    "description": "서울시가 새 정책을 발표했다.",
+                    "description": "서울시가 새 정책을 발표했습니다.",
                     "originallink": "https://news.kbs.co.kr/news/view.do?ncd=1",
                     "link": "https://n.news.naver.com/article/001/1",
                     "pubDate": "Wed, 15 Jul 2026 09:00:00 +0900",

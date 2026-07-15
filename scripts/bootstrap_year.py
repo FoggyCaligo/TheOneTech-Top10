@@ -39,7 +39,7 @@ def main() -> None:
     print(f"검색어: {BOOTSTRAP_QUERY}")
     print(
         "주의: 네이버 뉴스 검색 API는 단일 검색어당 최대 1,000건까지만 접근할 수 있어 "
-        "최근 1년 전체 기사를 완전히 소급 수집하지는 못합니다."
+        "최근 1년 전체 기사를 완전히 수집하지는 못합니다."
     )
 
     client = NaverNewsClient(config)

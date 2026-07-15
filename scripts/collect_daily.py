@@ -15,7 +15,7 @@ def main() -> None:
         "--days",
         type=int,
         default=2,
-        help="오늘을 포함해 다시 조회할 일수. 기본 2일은 지연 등록 기사를 보완합니다.",
+        help="오늘을 포함해 다시 조회할 일수입니다. 기본 2일은 지연 등록 기사를 보완합니다.",
     )
     args = parser.parse_args()
 
