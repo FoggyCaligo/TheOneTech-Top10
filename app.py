@@ -17,6 +17,29 @@ from src.pipeline import analyze_articles, remove_exact_body_duplicates
 load_dotenv()
 
 st.set_page_config(page_title="TheOneTech Top 10", layout="wide")
+
+
+@st.cache_data(show_spinner=False)
+def run_analysis_cached(
+    data: pd.DataFrame,
+    min_cluster_size: int,
+    duplicate_threshold: float,
+    subcluster_outlier_threshold: float,
+    fast_mode: bool,
+    include_map: bool,
+):
+    return analyze_articles(
+        data,
+        min_cluster_size=min_cluster_size,
+        duplicate_threshold=duplicate_threshold,
+        subcluster_outlier_threshold=subcluster_outlier_threshold,
+        fast_mode=fast_mode,
+        include_map=include_map,
+        title_col="title",
+        body_col="body",
+    )
+
+
 st.title("지역 뉴스 이슈 Top 10")
 st.caption(
     "빅카인즈 API, 네이버 API+DB, 빅카인즈 다운로드 파일 중 하나를 선택해 지역 뉴스 이슈를 군집화합니다."
@@ -32,7 +55,12 @@ with st.sidebar:
     fast_mode = st.toggle(
         "빠른 모드",
         value=False,
-        help="본문 완전중복만 제거하고, 임베딩 기반 중복 제거와 군집 내부 재군집화를 건너뜁니다.",
+        help="TF-IDF+SVD 기반으로 빠르게 군집화하고, 임베딩 기반 중복 제거와 군집 내부 재군집화를 건너뜁니다.",
+    )
+    include_map = st.toggle(
+        "기사 군집 지도 생성",
+        value=False,
+        help="끄면 UMAP 좌표 계산을 생략해 Top N 표를 더 빨리 만듭니다.",
     )
     top_n = st.number_input("Top N 이슈 수", min_value=1, max_value=50, value=10, step=1)
     min_cluster_size = st.slider("최소 군집 기사 수", 3, 50, 30)
@@ -212,14 +240,13 @@ st.dataframe(preview_data.head(30), use_container_width=True, hide_index=True)
 if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
     with st.spinner("임베딩 모델 로드 및 군집화 중..."):
         try:
-            result = analyze_articles(
+            result = run_analysis_cached(
                 data,
                 min_cluster_size=min_cluster_size,
                 duplicate_threshold=duplicate_threshold,
                 subcluster_outlier_threshold=subcluster_outlier_threshold,
                 fast_mode=fast_mode,
-                title_col="title",
-                body_col="body",
+                include_map=include_map,
             )
         except Exception as exc:
             st.error(str(exc))
@@ -264,19 +291,22 @@ if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
             hide_index=True,
         )
 
-    st.subheader("기사 군집 지도")
-    figure = px.scatter(
-        articles,
-        x="x",
-        y="y",
-        color="map_topic",
-        hover_data=["title", "cluster", "subcluster", "topic"],
-        title="UMAP 2차원 뉴스기사 군집",
-        category_orders={"map_topic": topics["map_topic"].tolist() + ["Top N 외 군집", "노이즈/기타"]},
-    )
-    figure.update_traces(marker={"size": 9, "opacity": 0.75})
-    figure.update_layout(legend_title_text="Top N 주제", height=650)
-    st.plotly_chart(figure, use_container_width=True)
+    if include_map and {"x", "y"}.issubset(articles.columns):
+        st.subheader("기사 군집 지도")
+        figure = px.scatter(
+            articles,
+            x="x",
+            y="y",
+            color="map_topic",
+            hover_data=["title", "cluster", "subcluster", "topic"],
+            title="UMAP 2차원 뉴스기사 군집",
+            category_orders={"map_topic": topics["map_topic"].tolist() + ["Top N 외 군집", "노이즈/기타"]},
+        )
+        figure.update_traces(marker={"size": 9, "opacity": 0.75})
+        figure.update_layout(legend_title_text="Top N 주제", height=650)
+        st.plotly_chart(figure, use_container_width=True)
+    else:
+        st.info("기사 군집 지도 생성을 꺼서 UMAP 좌표 계산을 생략했습니다.")
 
     st.download_button(
         "분석 결과 CSV 다운로드",

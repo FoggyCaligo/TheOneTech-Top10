@@ -59,7 +59,7 @@ python scripts/collect_daily.py
 
 1. 입력 데이터를 `title`, `body`, `publisher`, `published_at`, `url`, `query` 중심의 표준 컬럼으로 맞춥니다.
 2. 두 종류의 텍스트를 만듭니다. 중복 판정용 `dedupe_text`는 `title + body` 원문을 사용합니다. 군집화용 `cluster_text`는 정규화된 키워드만 사용합니다.
-3. 모든 기사에서 `title + body 앞부분` 기반 기사별 TF-IDF 핵심어를 자동 추출합니다. 빅카인즈 다운로드 파일에 `키워드` 또는 `특성추출(가중치순 상위 50개)` 컬럼이 있으면 그 값과 자동 추출 핵심어를 합칩니다. 이후 쉼표, 공백, `·`, `/`, `|` 등을 기준으로 키워드를 나누고, 중복 제거와 정렬을 거쳐 `keyword_text`를 정규화합니다. `cluster_text`는 이 `keyword_text`입니다.
+3. 모든 기사에서 `title + body 앞부분` 기반 기사별 핵심어를 자동 추출합니다. `kiwipiepy`가 설치되어 있으면 Kiwi 형태소 분석기로 명사, 고유명사, 영문/숫자 토큰과 인접 명사구를 후보로 만든 뒤 TF-IDF 상위 키워드를 고릅니다. 빅카인즈 다운로드 파일에 `키워드` 또는 `특성추출(가중치순 상위 50개)` 컬럼이 있으면 그 값과 자동 추출 핵심어를 합칩니다. 이후 쉼표, 공백, `·`, `/`, `|` 등을 기준으로 키워드를 나누고, 중복 제거와 정렬을 거쳐 `keyword_text`를 정규화합니다. `cluster_text`는 이 `keyword_text`입니다.
 4. 같은 `body`가 반복되는 기사는 제목이 달라도 완전 중복으로 보고 먼저 제거합니다.
 5. 남은 기사들은 `dedupe_text` 임베딩 코사인 유사도로 한 번 더 중복 제거합니다. 앱의 `중복 판정 유사도` 슬라이더가 이 기준입니다.
 6. 중복 제거가 끝난 기사들의 `cluster_text` 임베딩을 만들어 UMAP과 HDBSCAN으로 세부 군집화합니다.
@@ -70,10 +70,11 @@ python scripts/collect_daily.py
 
 앱의 `빠른 모드`를 켜면 속도를 위해 일부 품질 단계를 건너뜁니다.
 
-- 유지: `body` 완전중복 제거, 키워드 기반 군집화, UMAP/HDBSCAN
+- 유지: `body` 완전중복 제거, 키워드 기반 군집화
+- 변경: SentenceTransformer 대신 `TF-IDF + TruncatedSVD` 벡터로 HDBSCAN 군집화
 - 생략: `dedupe_text(title + body)` 임베딩 유사도 중복 제거, 군집 내부 이질 기사 재분리/재군집화
 
-모델 로드는 캐시되므로 같은 세션에서 반복 실행할 때는 첫 실행보다 빠르게 시작됩니다.
+`기사 군집 지도 생성`을 끄면 UMAP 좌표 계산을 생략하고 Top N 표만 만듭니다. 분석 결과는 Streamlit 캐시에 저장되므로 같은 파일과 같은 설정으로 다시 실행하면 재계산을 줄일 수 있습니다. SentenceTransformer 모델 로드도 캐시됩니다.
 
 ## Top N 순위 산정
 

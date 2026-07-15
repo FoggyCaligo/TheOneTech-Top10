@@ -4,7 +4,9 @@ import pytest
 import numpy as np
 
 from src.pipeline import (
+    _extract_document_keywords,
     _issue_score,
+    _keyword_tfidf_vectors,
     _label_quality,
     _normalize_keyword_text,
     _strict_centroid_groups,
@@ -65,7 +67,7 @@ def test_prepare_articles_combines_existing_and_extracted_keywords():
     result = prepare_articles(frame)
 
     assert "비트코인" in result.iloc[0]["keyword_text"]
-    assert "거래소" in result.iloc[0]["keyword_text"]
+    assert "규제" in result.iloc[0]["keyword_text"]
 
 
 def test_prepare_articles_extracts_keywords_when_keyword_text_is_missing():
@@ -84,6 +86,37 @@ def test_prepare_articles_extracts_keywords_when_keyword_text_is_missing():
 
 def test_normalize_keyword_text_sorts_equivalent_keyword_sets():
     assert _normalize_keyword_text("슈퍼문, 블루문") == _normalize_keyword_text("블루문,슈퍼문")
+
+
+def test_extract_document_keywords_prefers_kiwi_noun_terms(monkeypatch):
+    class FakeToken:
+        def __init__(self, form, tag):
+            self.form = form
+            self.tag = tag
+
+    class FakeKiwi:
+        def tokenize(self, text):
+            return [
+                FakeToken("Bitcoin", "SL"),
+                FakeToken("market", "NNG"),
+                FakeToken("running", "VV"),
+            ]
+
+    monkeypatch.setattr("src.pipeline._load_kiwi", lambda: FakeKiwi())
+
+    keywords = _extract_document_keywords(pd.Series(["Bitcoin market is running."]))
+
+    assert "bitcoin" in keywords.iloc[0]
+    assert "market" in keywords.iloc[0]
+    assert "running" not in keywords.iloc[0]
+
+
+def test_keyword_tfidf_vectors_returns_one_vector_per_article():
+    vectors = _keyword_tfidf_vectors(
+        pd.Series(["비트코인 가상화폐 거래소", "블루문 슈퍼문 천문", "비트코인 거래소"])
+    )
+
+    assert vectors.shape[0] == 3
 
 
 def test_prepare_articles_rejects_missing_columns():

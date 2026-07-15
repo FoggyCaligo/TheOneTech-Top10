@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import umap
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics.pairwise import cosine_similarity
 
 GENERIC_TOPIC_TERMS = {
@@ -50,6 +51,15 @@ def _load_sentence_transformer(model_name: str):
     return SentenceTransformer(model_name)
 
 
+@lru_cache(maxsize=1)
+def _load_kiwi():
+    try:
+        from kiwipiepy import Kiwi
+    except ImportError:
+        return None
+    return Kiwi()
+
+
 def normalize_text(value: object) -> str:
     text = "" if value is None else str(value)
     text = re.sub(r"<[^>]+>", " ", text)
@@ -57,10 +67,39 @@ def normalize_text(value: object) -> str:
     return text.strip()
 
 
+def _extract_korean_noun_terms(text: str) -> str:
+    kiwi = _load_kiwi()
+    if kiwi is None:
+        return ""
+
+    tokens = kiwi.tokenize(text)
+    noun_tokens: list[str] = []
+    terms: list[str] = []
+    for token in tokens:
+        form = normalize_text(token.form)
+        if len(form) < 2:
+            noun_tokens.append("")
+            continue
+        if token.tag in {"NNG", "NNP", "SL", "SN"}:
+            noun_tokens.append(form)
+            terms.append(form)
+        else:
+            noun_tokens.append("")
+
+    for left, right in zip(noun_tokens, noun_tokens[1:]):
+        if left and right:
+            terms.append(f"{left} {right}")
+
+    return " ".join(terms)
+
+
 def _extract_document_keywords(texts: pd.Series, top_n: int = 8) -> pd.Series:
     values = texts.fillna("").astype(str).map(normalize_text)
     if values.empty or values.str.len().sum() == 0:
         return pd.Series(["" for _ in range(len(values))], index=values.index)
+    keyword_source = values.map(_extract_korean_noun_terms)
+    if keyword_source.str.len().sum() == 0:
+        keyword_source = values
     try:
         vectorizer = TfidfVectorizer(
             ngram_range=(1, 2),
@@ -68,7 +107,7 @@ def _extract_document_keywords(texts: pd.Series, top_n: int = 8) -> pd.Series:
             min_df=1,
             token_pattern=r"(?u)[가-힣A-Za-z0-9]{2,}",
         )
-        matrix = vectorizer.fit_transform(values)
+        matrix = vectorizer.fit_transform(keyword_source)
         terms = vectorizer.get_feature_names_out()
         rows: list[str] = []
         for row in matrix:
@@ -247,6 +286,22 @@ def _issue_score(article_count: int, cohesion_score: float, label_quality: float
     return round(article_count * cohesion_factor * label_factor, 4)
 
 
+def _keyword_tfidf_vectors(texts: pd.Series) -> np.ndarray:
+    vectorizer = TfidfVectorizer(
+        ngram_range=(1, 2),
+        max_features=5000,
+        min_df=1,
+        token_pattern=r"(?u)[가-힣A-Za-z0-9]{2,}",
+    )
+    matrix = vectorizer.fit_transform(texts.fillna("").astype(str))
+    max_components = min(50, matrix.shape[0] - 1, matrix.shape[1] - 1)
+    if max_components < 2:
+        return matrix.toarray()
+    reduced = TruncatedSVD(n_components=max_components, random_state=42).fit_transform(matrix)
+    norms = np.linalg.norm(reduced, axis=1, keepdims=True)
+    return np.divide(reduced, norms, out=np.zeros_like(reduced), where=norms != 0)
+
+
 def _strict_centroid_groups(
     centroids: np.ndarray,
     threshold: float,
@@ -397,38 +452,32 @@ def analyze_articles(
     duplicate_threshold: float = 0.96,
     subcluster_outlier_threshold: float = 0.45,
     fast_mode: bool = False,
+    include_map: bool = False,
     title_col: str = "title",
     body_col: str = "body",
 ) -> AnalysisResult:
     articles = prepare_articles(frame, title_col=title_col, body_col=body_col)
     articles = remove_exact_body_duplicates(articles, body_col="body")
 
-    model = _load_sentence_transformer(model_name)
-    if not fast_mode:
+    if fast_mode:
+        embeddings = _keyword_tfidf_vectors(articles["cluster_text"])
+    else:
+        model = _load_sentence_transformer(model_name)
         articles = remove_near_duplicates_by_text(
             articles,
             model,
             threshold=duplicate_threshold,
             text_col="dedupe_text",
         )
-    embeddings = model.encode(
-        articles["cluster_text"].tolist(),
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    )
-    embeddings = np.asarray(embeddings)
+        embeddings = model.encode(
+            articles["cluster_text"].tolist(),
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        embeddings = np.asarray(embeddings)
 
     if len(articles) < max(5, min_cluster_size):
         raise ValueError("중복 제거 후 군집화할 기사가 부족합니다.")
-
-    reducer = umap.UMAP(
-        n_neighbors=min(15, len(articles) - 1),
-        n_components=2,
-        min_dist=0.05,
-        metric="cosine",
-        random_state=42,
-    )
-    coordinates = reducer.fit_transform(embeddings)
 
     effective_min_cluster_size = min(min_cluster_size, max(2, len(articles) // 2))
     clusterer = hdbscan.HDBSCAN(
@@ -438,7 +487,7 @@ def analyze_articles(
         cluster_selection_method="eom",
         prediction_data=True,
     )
-    labels = clusterer.fit_predict(coordinates)
+    labels = clusterer.fit_predict(embeddings)
     if not fast_mode:
         labels = refine_subclusters(
             labels.astype(int),
@@ -449,8 +498,17 @@ def analyze_articles(
 
     articles["subcluster"] = labels.astype(int)
     articles["cluster"] = articles["subcluster"]
-    articles["x"] = coordinates[:, 0]
-    articles["y"] = coordinates[:, 1]
+    if include_map:
+        reducer = umap.UMAP(
+            n_neighbors=min(15, len(articles) - 1),
+            n_components=2,
+            min_dist=0.05,
+            metric="cosine",
+            random_state=42,
+        )
+        coordinates = reducer.fit_transform(embeddings)
+        articles["x"] = coordinates[:, 0]
+        articles["y"] = coordinates[:, 1]
 
     topic_rows: list[dict[str, object]] = []
     valid = articles[articles["cluster"] >= 0]
