@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -15,58 +14,12 @@ from src.database import ArticleDatabase
 from src.naver_news import NaverNewsClient, NaverNewsConfig
 
 
-DEFAULT_SUFFIXES = (
-    "",
-    "정책",
-    "교통",
-    "지하철",
-    "버스",
-    "주택",
-    "부동산",
-    "재개발",
-    "복지",
-    "청년",
-    "교육",
-    "경제",
-    "일자리",
-    "환경",
-    "기후",
-    "안전",
-    "재난",
-    "문화",
-    "관광",
-    "의회",
-    "시장",
-)
-
-
-def build_bootstrap_queries(base_query: str, suffixes: tuple[str, ...]) -> tuple[str, ...]:
-    base = base_query.strip()
-    if not base:
-        raise ValueError("초기 적재 검색어는 비어 있을 수 없습니다.")
-
-    queries: list[str] = []
-    for suffix in suffixes:
-        suffix = suffix.strip()
-        query = base if not suffix else f"{base} {suffix}"
-        if query not in queries:
-            queries.append(query)
-    return tuple(queries)
-
-
-def load_suffixes() -> tuple[str, ...]:
-    raw = os.getenv("BOOTSTRAP_QUERY_SUFFIXES", "").strip()
-    if not raw:
-        return DEFAULT_SUFFIXES
-    values = tuple(item.strip() for item in raw.split(",") if item.strip())
-    return ("", *values) if "" not in values else values
+BOOTSTRAP_QUERY = "서울"
 
 
 def main() -> None:
     load_dotenv(ROOT / ".env")
 
-    base_query = os.getenv("BOOTSTRAP_BASE_QUERY", "서울").strip() or "서울"
-    queries = build_bootstrap_queries(base_query, load_suffixes())
     today = date.today()
     start_date = today - timedelta(days=365)
 
@@ -74,7 +27,7 @@ def main() -> None:
     config = NaverNewsConfig(
         client_id=base_config.client_id,
         client_secret=base_config.client_secret,
-        queries=queries,
+        queries=(BOOTSTRAP_QUERY,),
         publisher_domains=base_config.publisher_domains,
         page_size=base_config.page_size,
         max_results_per_query=base_config.max_results_per_query,
@@ -83,10 +36,11 @@ def main() -> None:
     )
 
     print(f"초기 적재 기간: {start_date} ~ {today}")
-    print(f"기본 검색어: {base_query}")
-    print(f"검색 조합: {len(queries)}개")
-    for query in queries:
-        print(f"  - {query}")
+    print(f"검색어: {BOOTSTRAP_QUERY}")
+    print(
+        "주의: 네이버 뉴스 검색 API는 단일 검색어당 최대 1,000건까지만 접근할 수 있어 "
+        "최근 1년 전체 기사를 완전히 소급 수집하지는 못합니다."
+    )
 
     client = NaverNewsClient(config)
     database = ArticleDatabase()
