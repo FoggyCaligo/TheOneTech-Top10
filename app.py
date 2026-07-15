@@ -34,6 +34,22 @@ with st.sidebar:
     duplicate_threshold = st.slider(
         "중복 판정 유사도", 0.85, 0.995, 0.85, step=0.005
     )
+    merge_threshold = st.slider(
+        "상위 이슈 병합 유사도",
+        0.50,
+        0.95,
+        0.72,
+        step=0.01,
+        help="낮출수록 세부 군집을 더 많이 합쳐 넓은 이슈로 봅니다.",
+    )
+    subcluster_outlier_threshold = st.slider(
+        "군집 내부 이질 기사 제거 기준",
+        0.20,
+        0.80,
+        0.45,
+        step=0.01,
+        help="높일수록 군집 중심에서 조금만 멀어도 이질 기사로 분리합니다.",
+    )
     st.divider()
     st.metric("DB 전체 기사", f"{database.count():,}개")
     monthly = database.monthly_counts()
@@ -196,6 +212,8 @@ if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
                 data,
                 min_cluster_size=min_cluster_size,
                 duplicate_threshold=duplicate_threshold,
+                merge_threshold=merge_threshold,
+                subcluster_outlier_threshold=subcluster_outlier_threshold,
                 title_col="title",
                 body_col="body",
             )
@@ -248,7 +266,7 @@ if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
         x="x",
         y="y",
         color="map_topic",
-        hover_data=["title", "cluster", "topic"],
+        hover_data=["title", "cluster", "subcluster", "topic"],
         title="UMAP 2차원 뉴스기사 군집",
         category_orders={"map_topic": topics["map_topic"].tolist() + ["Top N 외 군집", "노이즈/기타"]},
     )

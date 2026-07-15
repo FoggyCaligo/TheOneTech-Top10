@@ -82,6 +82,14 @@ def normalize_bigkinds_csv(
             "query": source.apply(lambda row: _row_region(row, selected_regions), axis=1),
         }
     )
+    keyword_parts = []
+    for column in ("키워드", "특성추출(가중치순 상위 50개)"):
+        if column in source.columns:
+            keyword_parts.append(source[column].fillna("").astype(str))
+    if keyword_parts:
+        result["keyword_text"] = pd.concat(keyword_parts, axis=1).agg(",".join, axis=1).map(clean_text)
+    else:
+        result["keyword_text"] = ""
     if "뉴스 식별자" in source.columns:
         empty_url = result["url"].eq("")
         result.loc[empty_url, "url"] = "bigkinds:" + source.loc[empty_url, "뉴스 식별자"].astype(str)

@@ -46,6 +46,7 @@ def test_normalize_bigkinds_csv_filters_and_maps_columns():
     assert result.iloc[0]["published_at"] == "2026-07-15T00:00:00"
     assert result.iloc[0]["url"] == "https://example.com/news/abc&ref=DA"
     assert result.iloc[0]["query"] == "서울"
+    assert "교통" in result.iloc[0]["keyword_text"]
 
 
 def test_load_bigkinds_download_supports_xlsx(tmp_path):
