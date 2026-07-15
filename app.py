@@ -312,6 +312,10 @@ if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
             category_orders={"map_topic": topics["map_topic"].tolist() + ["Top N 외 군집", "노이즈/기타"]},
         )
         figure.update_traces(marker={"size": 9, "opacity": 0.75})
+        figure.update_traces(
+            marker={"size": 7, "opacity": 0.08},
+            selector={"name": "노이즈/기타"},
+        )
         figure.update_layout(legend_title_text="Top N 주제", height=650)
         st.plotly_chart(figure, use_container_width=True)
     else:
