@@ -10,8 +10,8 @@ from src.pipeline import (
     _label_corpus_idf,
     _label_quality,
     _normalize_keyword_text,
+    _period_weight,
     _strict_centroid_groups,
-    _template_penalty,
     _topic_keywords,
     refine_subclusters,
     normalize_text,
@@ -20,7 +20,6 @@ from src.pipeline import (
     remove_near_duplicates_by_text,
     remove_exact_body_duplicates,
     remove_near_duplicates,
-    remove_repeated_keyword_templates,
 )
 
 
@@ -123,19 +122,6 @@ def test_keyword_tfidf_vectors_returns_one_vector_per_article():
     assert vectors.shape[0] == 3
 
 
-def test_remove_repeated_keyword_templates_caps_identical_cluster_text():
-    articles = pd.DataFrame(
-        {
-            "title": [f"article {index}" for index in range(6)],
-            "cluster_text": ["same keyword"] * 5 + ["other keyword"],
-        }
-    )
-
-    deduped = remove_repeated_keyword_templates(articles, max_per_signature=2)
-
-    assert list(deduped["title"]) == ["article 0", "article 1", "article 5"]
-
-
 def test_topic_keywords_prefers_cluster_terms_that_are_rare_in_corpus():
     corpus = [
         "공통 발표 비트코인",
@@ -156,38 +142,34 @@ def test_prepare_articles_rejects_missing_columns():
         prepare_articles(pd.DataFrame({"title": ["기사"]}))
 
 
-def test_label_quality_penalizes_generic_topic_terms():
+def test_label_quality_only_checks_that_label_exists():
     assert _label_quality("비트코인 · 가상화폐 · 거래소") == 1.0
-    assert _label_quality("기자 · 사진 · 있다") == 0.0
+    assert _label_quality("기자 · 사진 · 있다") == 1.0
+    assert _label_quality("") == 0.0
 
 
-def test_issue_score_discounts_loose_or_generic_clusters():
+def test_issue_score_uses_period_weight():
     strong = _issue_score(article_count=80, cohesion_score=0.9, label_quality=1.0)
-    noisy = _issue_score(article_count=100, cohesion_score=0.3, label_quality=0.0)
-
-    assert strong > noisy
-    assert noisy == 0
-
-
-def test_issue_score_discounts_template_like_clusters():
-    normal_penalty = _template_penalty(cohesion_score=0.9, template_score=0.1)
-    template_penalty = _template_penalty(cohesion_score=0.99, template_score=0.8)
-
-    normal = _issue_score(
-        article_count=100,
-        cohesion_score=0.99,
+    weighted = _issue_score(
+        article_count=80,
+        cohesion_score=0.9,
         label_quality=1.0,
-        template_penalty=normal_penalty,
-    )
-    template_like = _issue_score(
-        article_count=100,
-        cohesion_score=0.99,
-        label_quality=1.0,
-        template_penalty=template_penalty,
+        period_weight=1.3,
     )
 
-    assert template_penalty < normal_penalty
-    assert template_like < normal
+    assert weighted > strong
+
+
+def test_period_weight_rewards_time_concentration():
+    all_dates = pd.Series(pd.date_range("2026-01-01", "2026-01-31", freq="D"))
+    concentrated_dates = pd.Series(pd.date_range("2026-01-10", "2026-01-12", freq="D"))
+    spread_dates = pd.Series(pd.date_range("2026-01-01", "2026-01-31", freq="10D"))
+
+    concentrated_weight, concentrated_days = _period_weight(concentrated_dates, all_dates)
+    spread_weight, spread_days = _period_weight(spread_dates, all_dates)
+
+    assert concentrated_days < spread_days
+    assert concentrated_weight > spread_weight
 
 
 def test_remove_near_duplicates_drops_identical_long_body_even_with_different_titles():

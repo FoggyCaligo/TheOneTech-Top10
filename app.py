@@ -289,9 +289,8 @@ if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
                 "article_count",
                 "share_percent",
                 "cohesion_score",
-                "label_quality",
-                "template_score",
-                "template_penalty",
+                "period_weight",
+                "active_days",
                 "representative_title",
             ]
         ].rename(columns={"map_topic": "topic"})

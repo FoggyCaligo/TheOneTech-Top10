@@ -13,28 +13,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics.pairwise import cosine_similarity
 
-GENERIC_TOPIC_TERMS = {
-    "기자",
-    "사진",
-    "전국",
-    "오전",
-    "오후",
-    "있다",
-    "했다",
-    "한다",
-    "대한",
-    "관련",
-    "지난",
-    "오늘",
-    "내일",
-    "제공",
-    "열린",
-    "모습",
-    "뉴스",
-    "밝혔다",
-    "본문",
-    "본문입니다",
-}
+GENERIC_TOPIC_TERMS: set[str] = set()
 _KEYWORD_SPLIT_RE = re.compile(r"[,;/|·\n\r\t]+|\s{2,}")
 
 
@@ -116,7 +95,7 @@ def _extract_document_keywords(texts: pd.Series, top_n: int = 8) -> pd.Series:
             selected = [
                 terms[index]
                 for index in order
-                if scores[index] > 0 and terms[index] not in GENERIC_TOPIC_TERMS
+                if scores[index] > 0
             ]
             rows.append(",".join(selected))
         return pd.Series(rows, index=values.index)
@@ -135,8 +114,7 @@ def _normalize_keyword_text(value: object) -> str:
         tokens = term.split()
         if (
             len(term) < 2
-            or term in GENERIC_TOPIC_TERMS
-            or any(token in GENERIC_TOPIC_TERMS for token in tokens)
+            or not tokens
         ):
             continue
         terms.add(term)
@@ -267,7 +245,7 @@ def _topic_keywords(
         selected = [
             terms[index]
             for index in order
-            if scores[index] > 0 and terms[index] not in GENERIC_TOPIC_TERMS
+            if scores[index] > 0
         ][:top_n]
         return " · ".join(selected) if selected else "기타 이슈"
     except ValueError:
@@ -297,7 +275,6 @@ def _label_corpus_idf(texts: Iterable[str]) -> dict[str, float]:
         return {
             term: float(score)
             for term, score in zip(terms, idf)
-            if term not in GENERIC_TOPIC_TERMS
         }
     except ValueError:
         return {}
@@ -317,40 +294,35 @@ def _cluster_cohesion(embeddings: np.ndarray) -> float:
 
 def _label_quality(topic_name: str) -> float:
     terms = [term.strip() for term in topic_name.split("·") if term.strip()]
-    if not terms:
-        return 0.0
-    generic_count = sum(1 for term in terms if term in GENERIC_TOPIC_TERMS)
-    return round(1.0 - generic_count / len(terms), 4)
+    return 1.0 if terms else 0.0
 
 
-def _cluster_template_score(group: pd.DataFrame) -> float:
-    if group.empty or "cluster_text" not in group.columns:
-        return 0.0
-    top_signature_share = group["cluster_text"].value_counts(normalize=True).iloc[0]
-    return round(float(np.clip(top_signature_share, 0.0, 1.0)), 4)
+def _period_weight(group_dates: pd.Series, all_dates: pd.Series) -> tuple[float, int]:
+    group = pd.to_datetime(group_dates, errors="coerce").dropna()
+    overall = pd.to_datetime(all_dates, errors="coerce").dropna()
+    if group.empty or overall.empty or len(group) < 2:
+        return 1.0, 0
 
+    group_span_days = max(1, int((group.max().normalize() - group.min().normalize()).days) + 1)
+    overall_span_days = max(1, int((overall.max().normalize() - overall.min().normalize()).days) + 1)
+    if overall_span_days <= 1:
+        return 1.0, group_span_days
 
-def _template_penalty(cohesion_score: float, template_score: float) -> float:
-    if template_score < 0.25 and cohesion_score < 0.97:
-        return 1.0
-    repetition_penalty = 1.0 - max(0.0, template_score - 0.25) * 0.6
-    cohesion_penalty = 0.82 if cohesion_score >= 0.985 else 0.9 if cohesion_score >= 0.97 else 1.0
-    return round(float(np.clip(repetition_penalty * cohesion_penalty, 0.35, 1.0)), 4)
+    concentration = 1.0 - min(1.0, group_span_days / overall_span_days)
+    weight = 1.0 + concentration * 0.45
+    return round(float(np.clip(weight, 1.0, 1.45)), 4), group_span_days
 
 
 def _issue_score(
     article_count: int,
     cohesion_score: float,
     label_quality: float,
-    template_penalty: float = 1.0,
+    period_weight: float = 1.0,
 ) -> float:
-    # Noisy labels such as "기자 · 사진" should not outrank real issue clusters
-    # merely because they are large.
     if label_quality <= 0:
         return 0.0
     cohesion_factor = max(cohesion_score, 0.0) ** 1.5
-    label_factor = label_quality ** 3
-    return round(article_count * cohesion_factor * label_factor * template_penalty, 4)
+    return round(article_count * cohesion_factor * period_weight, 4)
 
 
 def _keyword_tfidf_vectors(texts: pd.Series) -> np.ndarray:
@@ -367,16 +339,6 @@ def _keyword_tfidf_vectors(texts: pd.Series) -> np.ndarray:
     reduced = TruncatedSVD(n_components=max_components, random_state=42).fit_transform(matrix)
     norms = np.linalg.norm(reduced, axis=1, keepdims=True)
     return np.divide(reduced, norms, out=np.zeros_like(reduced), where=norms != 0)
-
-
-def remove_repeated_keyword_templates(
-    articles: pd.DataFrame,
-    max_per_signature: int = 90,
-) -> pd.DataFrame:
-    if "cluster_text" not in articles.columns or articles.empty:
-        return articles.copy()
-    keep = articles.groupby("cluster_text", sort=False).cumcount() < max_per_signature
-    return articles.loc[keep].reset_index(drop=True)
 
 
 def _strict_centroid_groups(
@@ -537,10 +499,6 @@ def analyze_articles(
     articles = remove_exact_body_duplicates(articles, body_col="body")
 
     if fast_mode:
-        articles = remove_repeated_keyword_templates(
-            articles,
-            max_per_signature=max(60, min_cluster_size * 3),
-        )
         embeddings = _keyword_tfidf_vectors(articles["cluster_text"])
     else:
         model = _load_sentence_transformer(model_name)
@@ -600,8 +558,10 @@ def analyze_articles(
         group_embeddings = embeddings[group.index.to_numpy()]
         cohesion_score = round(_cluster_cohesion(group_embeddings), 4)
         label_quality = _label_quality(topic_name)
-        template_score = _cluster_template_score(group)
-        template_penalty = _template_penalty(cohesion_score, template_score)
+        period_weight, active_days = _period_weight(
+            group.get("published_at", pd.Series(dtype=object)),
+            valid.get("published_at", pd.Series(dtype=object)),
+        )
         topic_rows.append(
             {
                 "cluster": int(cluster_id),
@@ -610,13 +570,13 @@ def analyze_articles(
                 "share_percent": round(len(group) / denominator * 100, 2),
                 "cohesion_score": cohesion_score,
                 "label_quality": label_quality,
-                "template_score": template_score,
-                "template_penalty": template_penalty,
+                "period_weight": period_weight,
+                "active_days": active_days,
                 "issue_score": _issue_score(
                     int(len(group)),
                     cohesion_score,
                     label_quality,
-                    template_penalty=template_penalty,
+                    period_weight=period_weight,
                 ),
                 "representative_title": group.iloc[0]["title"],
             }
