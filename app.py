@@ -29,10 +29,21 @@ configured_queries = [
 
 with st.sidebar:
     st.header("분석 설정")
+    fast_mode = st.toggle(
+        "빠른 모드",
+        value=False,
+        help="본문 완전중복만 제거하고, 임베딩 기반 중복 제거와 군집 내부 재군집화를 건너뜁니다.",
+    )
     top_n = st.number_input("Top N 이슈 수", min_value=1, max_value=50, value=10, step=1)
     min_cluster_size = st.slider("최소 군집 기사 수", 3, 50, 30)
     duplicate_threshold = st.slider(
-        "중복 판정 유사도", 0.85, 0.995, 0.85, step=0.005
+        "중복 판정 유사도",
+        0.85,
+        0.995,
+        0.85,
+        step=0.005,
+        disabled=fast_mode,
+        help="빠른 모드에서는 본문 완전중복만 제거하므로 이 값은 사용하지 않습니다.",
     )
     subcluster_outlier_threshold = st.slider(
         "군집 내부 이질 기사 제거 기준",
@@ -41,6 +52,7 @@ with st.sidebar:
         0.45,
         step=0.01,
         help="높일수록 군집 중심에서 조금만 멀어도 이질 기사로 분리합니다.",
+        disabled=fast_mode,
     )
     st.divider()
     st.metric("DB 전체 기사", f"{database.count():,}개")
@@ -205,6 +217,7 @@ if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
                 min_cluster_size=min_cluster_size,
                 duplicate_threshold=duplicate_threshold,
                 subcluster_outlier_threshold=subcluster_outlier_threshold,
+                fast_mode=fast_mode,
                 title_col="title",
                 body_col="body",
             )

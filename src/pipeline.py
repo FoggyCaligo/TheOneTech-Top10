@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Iterable
 
 import hdbscan
@@ -40,6 +41,13 @@ _KEYWORD_SPLIT_RE = re.compile(r"[,;/|·\n\r\t]+|\s{2,}")
 class AnalysisResult:
     articles: pd.DataFrame
     topics: pd.DataFrame
+
+
+@lru_cache(maxsize=2)
+def _load_sentence_transformer(model_name: str):
+    from sentence_transformers import SentenceTransformer
+
+    return SentenceTransformer(model_name)
 
 
 def normalize_text(value: object) -> str:
@@ -388,20 +396,21 @@ def analyze_articles(
     min_cluster_size: int = 5,
     duplicate_threshold: float = 0.96,
     subcluster_outlier_threshold: float = 0.45,
+    fast_mode: bool = False,
     title_col: str = "title",
     body_col: str = "body",
 ) -> AnalysisResult:
-    from sentence_transformers import SentenceTransformer
-
     articles = prepare_articles(frame, title_col=title_col, body_col=body_col)
+    articles = remove_exact_body_duplicates(articles, body_col="body")
 
-    model = SentenceTransformer(model_name)
-    articles = remove_near_duplicates_by_text(
-        articles,
-        model,
-        threshold=duplicate_threshold,
-        text_col="dedupe_text",
-    )
+    model = _load_sentence_transformer(model_name)
+    if not fast_mode:
+        articles = remove_near_duplicates_by_text(
+            articles,
+            model,
+            threshold=duplicate_threshold,
+            text_col="dedupe_text",
+        )
     embeddings = model.encode(
         articles["cluster_text"].tolist(),
         normalize_embeddings=True,
@@ -430,12 +439,13 @@ def analyze_articles(
         prediction_data=True,
     )
     labels = clusterer.fit_predict(coordinates)
-    labels = refine_subclusters(
-        labels.astype(int),
-        embeddings,
-        min_cluster_size=effective_min_cluster_size,
-        outlier_threshold=subcluster_outlier_threshold,
-    )
+    if not fast_mode:
+        labels = refine_subclusters(
+            labels.astype(int),
+            embeddings,
+            min_cluster_size=effective_min_cluster_size,
+            outlier_threshold=subcluster_outlier_threshold,
+        )
 
     articles["subcluster"] = labels.astype(int)
     articles["cluster"] = articles["subcluster"]
