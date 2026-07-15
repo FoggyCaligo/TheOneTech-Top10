@@ -59,16 +59,16 @@ with st.sidebar:
     st.header("분석 설정")
     fast_mode = st.toggle(
         "빠른 모드",
-        value=False,
+        value=True,
         help="TF-IDF+SVD 기반으로 빠르게 군집화하고, 임베딩 기반 중복 제거와 군집 내부 재군집화를 건너뜁니다.",
     )
     include_map = st.toggle(
         "기사 군집 지도 생성",
-        value=False,
+        value=True,
         help="끄면 UMAP 좌표 계산을 생략해 Top N 표를 더 빨리 만듭니다.",
     )
     top_n = st.number_input("Top N 이슈 수", min_value=1, max_value=50, value=10, step=1)
-    min_cluster_size = st.slider("최소 군집 기사 수", 3, 50, 30)
+    min_cluster_size = st.slider("최소 군집 기사 수", 3, 50, 20)
     duplicate_threshold = st.slider(
         "중복 판정 유사도",
         0.85,
@@ -96,6 +96,7 @@ with st.sidebar:
 source = st.radio(
     "기사 소스",
     ["빅카인즈 API", "네이버 API + DB", "빅카인즈 다운로드 파일"],
+    index=2,
     horizontal=True,
 )
 data: pd.DataFrame | None = None
