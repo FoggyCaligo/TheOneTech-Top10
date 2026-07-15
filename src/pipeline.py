@@ -11,6 +11,28 @@ import umap
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+GENERIC_TOPIC_TERMS = {
+    "기자",
+    "사진",
+    "서울",
+    "전국",
+    "오전",
+    "오후",
+    "있다",
+    "했다",
+    "한다",
+    "대한",
+    "관련",
+    "지난",
+    "오늘",
+    "내일",
+    "제공",
+    "열린",
+    "모습",
+    "뉴스",
+    "밝혔다",
+}
+
 
 @dataclass(frozen=True)
 class AnalysisResult:
@@ -44,11 +66,30 @@ def prepare_articles(
     return articles
 
 
+def remove_exact_body_duplicates(
+    articles: pd.DataFrame,
+    body_col: str = "body",
+) -> pd.DataFrame:
+    if body_col not in articles.columns:
+        return articles.copy()
+    body_keys = articles[body_col].map(lambda value: normalize_text(value).lower())
+    keep = ~body_keys.duplicated(keep="first")
+    return articles.loc[keep].reset_index(drop=True)
+
+
 def remove_near_duplicates(
     articles: pd.DataFrame,
     embeddings: np.ndarray,
     threshold: float = 0.96,
 ) -> tuple[pd.DataFrame, np.ndarray]:
+    articles = articles.reset_index(drop=True)
+    body_keys = articles["body"].map(lambda value: normalize_text(value).lower())
+    keep_body = ~body_keys.duplicated(keep="first")
+    if not keep_body.all():
+        kept_indices = np.flatnonzero(keep_body.to_numpy())
+        articles = articles.iloc[kept_indices].reset_index(drop=True)
+        embeddings = embeddings[kept_indices]
+
     similarity = cosine_similarity(embeddings)
     keep: list[int] = []
     removed: set[int] = set()
@@ -82,6 +123,33 @@ def _topic_keywords(texts: Iterable[str], top_n: int = 5) -> str:
         return " · ".join(selected) if selected else "기타 이슈"
     except ValueError:
         return "기타 이슈"
+
+
+def _cluster_cohesion(embeddings: np.ndarray) -> float:
+    if len(embeddings) <= 1:
+        return 1.0
+    centroid = embeddings.mean(axis=0, keepdims=True)
+    norm = np.linalg.norm(centroid)
+    if norm == 0:
+        return 0.0
+    centroid = centroid / norm
+    similarities = cosine_similarity(embeddings, centroid).ravel()
+    return float(np.clip(similarities.mean(), 0.0, 1.0))
+
+
+def _label_quality(topic_name: str) -> float:
+    terms = [term.strip() for term in topic_name.split("·") if term.strip()]
+    if not terms:
+        return 0.0
+    generic_count = sum(1 for term in terms if term in GENERIC_TOPIC_TERMS)
+    return round(1.0 - generic_count / len(terms), 4)
+
+
+def _issue_score(article_count: int, cohesion_score: float, label_quality: float) -> float:
+    # Size remains the main signal, but generic/noisy labels and loose clusters are discounted.
+    cohesion_factor = 0.5 + 0.5 * cohesion_score
+    label_factor = 0.65 + 0.35 * label_quality
+    return round(article_count * cohesion_factor * label_factor, 4)
 
 
 def analyze_articles(
@@ -139,12 +207,18 @@ def analyze_articles(
     denominator = max(1, len(valid))
     for cluster_id, group in valid.groupby("cluster"):
         topic_name = _topic_keywords(group["text"], top_n=5)
+        group_embeddings = embeddings[group.index.to_numpy()]
+        cohesion_score = round(_cluster_cohesion(group_embeddings), 4)
+        label_quality = _label_quality(topic_name)
         topic_rows.append(
             {
                 "cluster": int(cluster_id),
                 "topic": topic_name,
                 "article_count": int(len(group)),
                 "share_percent": round(len(group) / denominator * 100, 2),
+                "cohesion_score": cohesion_score,
+                "label_quality": label_quality,
+                "issue_score": _issue_score(int(len(group)), cohesion_score, label_quality),
                 "representative_title": group.iloc[0]["title"],
             }
         )
@@ -152,7 +226,8 @@ def analyze_articles(
     topics = pd.DataFrame(topic_rows)
     if not topics.empty:
         topics = topics.sort_values(
-            ["article_count", "cluster"], ascending=[False, True]
+            ["issue_score", "article_count", "cohesion_score", "cluster"],
+            ascending=[False, False, False, True],
         ).reset_index(drop=True)
         topics.insert(0, "rank", np.arange(1, len(topics) + 1))
         topic_map = topics.set_index("cluster")["topic"].to_dict()

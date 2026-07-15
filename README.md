@@ -1,20 +1,16 @@
 # TheOneTech Top 10
 
-빅카인즈 API, 네이버 뉴스 검색 API+SQLite DB, 빅카인즈 다운로드 파일을 바탕으로 선택 기간의 지역 뉴스를 의미 유사도로 군집화해 기사 수 기준 Top 10 이슈를 추출합니다.
+빅카인즈 API, 네이버 뉴스 검색 API+SQLite DB, 빅카인즈 다운로드 파일을 바탕으로 선택 기간의 지역 뉴스를 의미 유사도로 군집화해 Top N 이슈를 추출합니다.
 
-## 수집 구조
+## 기사 소스
 
-1. `.env`의 `NEWS_QUERIES`에 `서울,광주,대전`처럼 지역 검색어를 설정합니다.
-2. 앱에서 기사 소스를 `빅카인즈 API`, `네이버 API + DB`, `빅카인즈 다운로드 파일` 중 하나로 선택합니다.
-3. 기간과 지역을 선택합니다.
-4. 빅카인즈 API는 기간 조건으로 직접 조회하고, 네이버 소스는 API 실행 후 SQLite DB를 조회합니다.
-5. 빅카인즈 다운로드 파일은 `csv`, `xlsx`, `xls`를 읽어 표준 분석 컬럼으로 정규화합니다.
-6. 네이버 수집 시에는 `originallink` 도메인이 메이저 언론사 허용 목록에 포함된 기사만 남깁니다.
-7. 대시보드는 선택된 소스의 기사를 분석합니다.
+앱에서 세 가지 소스 중 하나를 선택합니다.
 
-네이버 뉴스 검색 API는 언론사 필터 파라미터를 제공하지 않습니다. 따라서 전체 검색 결과 중 원문 URL 도메인이 허용 목록과 일치하는 기사만 후처리로 저장합니다.
+- `빅카인즈 API`: `.env`의 `BIGKINDS_ACCESS_KEY`로 빅카인즈 API를 호출합니다.
+- `네이버 API + DB`: 네이버 뉴스 검색 API로 수집한 뒤 SQLite DB에 저장하고, 선택 기간/지역으로 DB를 조회합니다.
+- `빅카인즈 다운로드 파일`: 빅카인즈에서 내려받은 `csv`, `xlsx`, `xls` 파일을 읽어 분석합니다.
 
-또한 API는 기사 전문이 아니라 제목, 기사 요약 passage, 원문 링크, 네이버 링크, 발행 시각을 제공합니다. 한 번에 최대 100건, 검색 시작 위치는 최대 1,000까지만 접근할 수 있어 전체 기사를 한 번에 완전 수집할 수는 없습니다.
+빅카인즈 다운로드 파일은 기본적으로 파일 내부 전체 기간을 사용합니다. 앱에서 `파일 내부 기사에 기간 필터 적용`을 켜면 시작일/종료일로 다시 거를 수 있습니다.
 
 ## 환경 설정
 
@@ -27,17 +23,12 @@ NAVER_CLIENT_ID=...
 NAVER_CLIENT_SECRET=...
 BIGKINDS_ACCESS_KEY=...
 NEWS_QUERIES=서울,광주,대전
-BIGKINDS_DOWNLOAD_PATH=Top10_experiment/NewsResult_20250715-20260715.csv
-NEWS_PUBLISHER_DOMAINS=yna.co.kr,newsis.com,news1.kr,kbs.co.kr,imnews.imbc.com,sbs.co.kr,ytn.co.kr,jtbc.co.kr,chosun.com,joongang.co.kr,donga.com,hani.co.kr,khan.co.kr,hankookilbo.com,mk.co.kr,hankyung.com
+BIGKINDS_DOWNLOAD_PATH=Top10_experiment/NewsResult_20250715-20260715_1year.csv
 NEWS_DB_PATH=data/news.db
 NEWS_RETENTION_DAYS=365
 ```
 
-`NEWS_PUBLISHER_DOMAINS`를 생략해도 코드의 기본 메이저 언론사 목록이 적용됩니다. 빈 설정 때문에 전체 언론사 수집으로 자동 전환되지는 않습니다.
-
-빅카인즈 API를 사용할 때는 `BIGKINDS_ACCESS_KEY`를 설정하고 앱에서 `빅카인즈 API`를 선택합니다.
-
-빅카인즈에서 내려받은 파일을 사용할 때는 앱에서 `빅카인즈 다운로드 파일`을 선택합니다. 기본 파일 경로는 `Top10_experiment/NewsResult_20250715-20260715.csv`이며, 필요하면 `.env`의 `BIGKINDS_DOWNLOAD_PATH`로 바꿀 수 있습니다. 다운로드 파일은 `csv`, `xlsx`, `xls`를 지원합니다.
+`NEWS_QUERIES`는 앱의 지역 선택 목록으로도 사용됩니다. 네이버 수집에서는 검색어 목록으로 쓰이고, 빅카인즈 다운로드 파일에서는 `위치`, `제목`, `본문`, `키워드`, `통합 분류` 컬럼에 해당 지역명이 포함된 기사를 남깁니다.
 
 ## 설치 및 실행
 
@@ -48,49 +39,57 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## 최초 1년 초기 적재
+## 네이버 수집 스크립트
 
-검색어를 `서울` 하나로 고정해, 실행 시점 기준 최근 1년 범위 안에서 네이버가 접근을 허용하는 최신 최대 1,000건을 조회합니다. 그중 메이저 언론사 기사만 DB에 저장합니다.
+최초 1년 초기 적재:
 
 ```bash
 python scripts/bootstrap_year.py
 ```
 
-같은 조건으로 반복 실행해도 URL 중복 데이터는 추가되지 않습니다.
-
-## 매일 자동 수집
-
-직접 한 번 실행:
+매일 증분 수집:
 
 ```bash
 python scripts/collect_daily.py
 ```
 
-기본값은 오늘과 전날을 다시 조회해 지연 등록 기사를 보완합니다. 초기 적재와 동일한 메이저 언론사 도메인 필터가 적용됩니다.
+네이버 뉴스 검색 API는 언론사 필터 파라미터를 제공하지 않습니다. 따라서 전체 검색 결과 중 `originallink` 도메인이 `NEWS_PUBLISHER_DOMAINS` 허용 목록과 일치하는 기사만 저장합니다. 또한 API는 기사 전문이 아니라 제목, 요약 passage, 링크, 발행 시각을 제공합니다.
 
-Linux cron 예시:
+## 분석 흐름
 
-```cron
-10 6 * * * cd /path/to/TheOneTech-Top10 && /path/to/.venv/bin/python scripts/collect_daily.py >> logs/collector.log 2>&1
+1. 입력 데이터를 `title`, `body`, `publisher`, `published_at`, `url`, `query` 중심의 표준 컬럼으로 맞춥니다.
+2. `title + body`를 합쳐 분석 텍스트를 만듭니다.
+3. Sentence Transformer로 기사 임베딩을 만듭니다.
+4. 같은 `body`가 반복되는 기사는 제목이 달라도 완전 중복으로 보고 먼저 제거합니다.
+5. 남은 기사들은 임베딩 코사인 유사도로 한 번 더 중복 제거합니다. 앱의 `중복 판정 유사도` 슬라이더가 이 기준입니다.
+6. UMAP으로 2차원 좌표를 만들고 HDBSCAN으로 군집화합니다.
+7. 군집별 TF-IDF 키워드, 대표 기사, 점수, 지도 좌표를 생성합니다.
+
+중복 판정은 `body`도 봅니다. 현재는 `body` 완전중복 제거와 `title + body` 임베딩 유사도 제거를 함께 사용합니다. 그래서 제목만 달라도 본문이 완전히 같으면 먼저 제거됩니다. 앱의 분석 버튼 위 미리보기 표도 본문 완전중복을 제외한 상태로 보여줍니다.
+
+## Top N 순위 산정
+
+Top N 표는 단순 기사 수만으로 정렬하지 않습니다. 현재 순위 기준은 `issue_score`입니다.
+
+```text
+issue_score = article_count × cohesion_factor × label_factor
+cohesion_factor = 0.5 + 0.5 × cohesion_score
+label_factor = 0.65 + 0.35 × label_quality
 ```
 
-Windows에서는 작업 스케줄러에 `python scripts/collect_daily.py`를 매일 실행하도록 등록하면 됩니다.
+- `article_count`: 해당 군집의 기사 수입니다.
+- `cohesion_score`: 군집 안 기사 임베딩이 중심점에 얼마나 가깝게 모였는지입니다. 1에 가까울수록 응집도가 높습니다.
+- `label_quality`: 군집 라벨에 `기자`, `사진`, `서울`, `있다` 같은 일반어가 적을수록 높습니다.
+- `issue_score`: 크지만 잡음이 많은 군집은 낮추고, 조금 작아도 응집도와 라벨 품질이 좋은 군집은 올리기 위한 최종 점수입니다.
 
-## 분석 기능
+표의 `rank`는 `issue_score`, `article_count`, `cohesion_score` 순으로 정렬해 부여합니다. 지도 범례의 순서는 Plotly가 데이터에서 주제를 만나는 순서에 가까우므로 공식 순위로 해석하면 안 됩니다.
 
-- Sentence Transformer 기사 임베딩
-- 코사인 유사도 기반 유사/중복 기사 제거
-- UMAP 차원 축소와 HDBSCAN 군집화
-- TF-IDF 기반 대표 키워드와 대표 기사 추출
-- 기사 수 기준 Top 10 이슈 및 군집 산점도
-- DB 조회 결과와 분석 결과 CSV 다운로드
+## 해석상 주의
+
+순위는 시민 여론이 아니라 수집된 기사 기준의 보도량과 군집 품질을 함께 반영한 값입니다. 빅카인즈 다운로드 파일은 사용자가 내려받은 범위에 의존하고, 네이버 검색 결과는 전체 언론 기사 아카이브를 보장하지 않습니다.
 
 ## 테스트
 
 ```bash
 pytest
 ```
-
-## 해석상 주의
-
-순위는 시민 여론이 아니라 수집된 기사 수, 즉 언론 보도량입니다. 네이버 검색 결과가 전체 언론 기사 아카이브를 보장하지 않으며, 메이저 언론사 필터는 네이버가 반환한 최대 1,000건 안에서만 적용됩니다.

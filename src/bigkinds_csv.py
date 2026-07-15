@@ -9,7 +9,7 @@ import pandas as pd
 
 from src.naver_news import clean_text
 
-DEFAULT_BIGKINDS_DOWNLOAD_PATH = "Top10_experiment/NewsResult_20250715-20260715.csv"
+DEFAULT_BIGKINDS_DOWNLOAD_PATH = "Top10_experiment/NewsResult_20250715-20260715_1year.csv"
 
 
 def bigkinds_download_path() -> Path:

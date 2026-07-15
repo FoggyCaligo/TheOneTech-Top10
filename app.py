@@ -12,7 +12,7 @@ from src.bigkinds_csv import bigkinds_download_path, load_bigkinds_download, nor
 from src.bigkinds_news import BigKindsConfig, BigKindsNewsClient
 from src.database import ArticleDatabase
 from src.naver_news import NaverNewsClient, NaverNewsConfig
-from src.pipeline import analyze_articles
+from src.pipeline import analyze_articles, remove_exact_body_duplicates
 
 load_dotenv()
 
@@ -30,7 +30,7 @@ configured_queries = [
 with st.sidebar:
     st.header("분석 설정")
     top_n = st.number_input("Top N 이슈 수", min_value=1, max_value=50, value=10, step=1)
-    min_cluster_size = st.slider("최소 군집 기사 수", 3, 30, 5)
+    min_cluster_size = st.slider("최소 군집 기사 수", 3, 50, 20)
     duplicate_threshold = st.slider(
         "중복 판정 유사도", 0.85, 0.995, 0.96, step=0.005
     )
@@ -177,7 +177,17 @@ if data is None or data.empty:
     st.info("기사를 수집하거나 DB 조회 기간을 조정하거나 CSV를 올려 주세요.")
     st.stop()
 
-st.dataframe(data.head(30), use_container_width=True, hide_index=True)
+preview_data = remove_exact_body_duplicates(data, body_col="body")
+removed_exact_body_duplicates = len(data) - len(preview_data)
+if removed_exact_body_duplicates:
+    st.caption(
+        f"본문이 완전히 같은 기사 {removed_exact_body_duplicates:,}개를 미리보기에서 제외했습니다. "
+        "분석 실행 시에는 임베딩 유사도 기반 중복 제거도 추가로 적용됩니다."
+    )
+else:
+    st.caption("본문 완전 중복은 발견되지 않았습니다. 분석 실행 시 임베딩 유사도 기반 중복 제거가 추가로 적용됩니다.")
+
+st.dataframe(preview_data.head(30), use_container_width=True, hide_index=True)
 
 if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
     with st.spinner("임베딩 모델 로드 및 군집화 중..."):
@@ -193,8 +203,18 @@ if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
             st.error(str(exc))
             st.stop()
 
-    topics = result.topics.head(int(top_n))
+    topics = result.topics.head(int(top_n)).copy()
     articles = result.articles
+    ranked_topic_map = {
+        row["cluster"]: f"{int(row['rank'])}. {row['topic']}"
+        for _, row in topics.iterrows()
+    }
+    topics["map_topic"] = topics["cluster"].map(ranked_topic_map)
+    articles = articles.copy()
+    articles["map_topic"] = articles["cluster"].map(ranked_topic_map)
+    articles["map_topic"] = articles["map_topic"].fillna(
+        articles["cluster"].map(lambda value: "노이즈/기타" if value < 0 else "Top N 외 군집")
+    )
     col1, col2, col3 = st.columns(3)
     col1.metric("분석 기사", f"{len(articles):,}개")
     col2.metric("감지된 군집", f"{len(result.topics):,}개")
@@ -204,8 +224,20 @@ if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
     if topics.empty:
         st.warning("군집을 만들지 못했습니다. 최소 군집 기사 수를 낮춰 보세요.")
     else:
+        topic_table = topics[
+            [
+                "rank",
+                "map_topic",
+                "issue_score",
+                "article_count",
+                "share_percent",
+                "cohesion_score",
+                "label_quality",
+                "representative_title",
+            ]
+        ].rename(columns={"map_topic": "topic"})
         st.dataframe(
-            topics[["rank", "topic", "article_count", "share_percent", "representative_title"]],
+            topic_table,
             use_container_width=True,
             hide_index=True,
         )
@@ -215,12 +247,13 @@ if st.button("Top 10 분석 실행", type="primary", use_container_width=True):
         articles,
         x="x",
         y="y",
-        color="topic",
-        hover_data=["title", "cluster"],
+        color="map_topic",
+        hover_data=["title", "cluster", "topic"],
         title="UMAP 2차원 뉴스기사 군집",
+        category_orders={"map_topic": topics["map_topic"].tolist() + ["Top N 외 군집", "노이즈/기타"]},
     )
     figure.update_traces(marker={"size": 9, "opacity": 0.75})
-    figure.update_layout(legend_title_text="주제", height=650)
+    figure.update_layout(legend_title_text="Top N 주제", height=650)
     st.plotly_chart(figure, use_container_width=True)
 
     st.download_button(
