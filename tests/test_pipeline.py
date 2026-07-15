@@ -7,9 +7,11 @@ from src.pipeline import (
     _extract_document_keywords,
     _issue_score,
     _keyword_tfidf_vectors,
+    _label_corpus_idf,
     _label_quality,
     _normalize_keyword_text,
     _strict_centroid_groups,
+    _topic_keywords,
     refine_subclusters,
     normalize_text,
     prepare_articles,
@@ -17,6 +19,7 @@ from src.pipeline import (
     remove_near_duplicates_by_text,
     remove_exact_body_duplicates,
     remove_near_duplicates,
+    remove_repeated_keyword_templates,
 )
 
 
@@ -117,6 +120,34 @@ def test_keyword_tfidf_vectors_returns_one_vector_per_article():
     )
 
     assert vectors.shape[0] == 3
+
+
+def test_remove_repeated_keyword_templates_caps_identical_cluster_text():
+    articles = pd.DataFrame(
+        {
+            "title": [f"article {index}" for index in range(6)],
+            "cluster_text": ["same keyword"] * 5 + ["other keyword"],
+        }
+    )
+
+    deduped = remove_repeated_keyword_templates(articles, max_per_signature=2)
+
+    assert list(deduped["title"]) == ["article 0", "article 1", "article 5"]
+
+
+def test_topic_keywords_prefers_cluster_terms_that_are_rare_in_corpus():
+    corpus = [
+        "공통 발표 비트코인",
+        "공통 발표 비트코인",
+        "공통 발표 부동산",
+        "공통 발표 증시",
+        "공통 발표 정치",
+    ]
+    label_idf = _label_corpus_idf(corpus)
+
+    topic = _topic_keywords(corpus[:2], top_n=2, corpus_idf=label_idf)
+
+    assert topic.split(" · ")[0] == "비트코인"
 
 
 def test_prepare_articles_rejects_missing_columns():

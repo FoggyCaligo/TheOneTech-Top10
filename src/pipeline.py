@@ -87,8 +87,8 @@ def _extract_korean_noun_terms(text: str) -> str:
             noun_tokens.append("")
 
     for left, right in zip(noun_tokens, noun_tokens[1:]):
-        if left and right:
-            terms.append(f"{left} {right}")
+        if left and right and left != right:
+            terms.append(f"{left}{right}")
 
     return " ".join(terms)
 
@@ -235,25 +235,72 @@ def remove_near_duplicates_by_text(
     return deduped
 
 
-def _topic_keywords(texts: Iterable[str], top_n: int = 5) -> str:
+def _topic_keywords(
+    texts: Iterable[str],
+    top_n: int = 5,
+    corpus_idf: dict[str, float] | None = None,
+) -> str:
     values = list(texts)
     if not values:
         return "분류되지 않음"
     try:
+        label_source = values
         vectorizer = TfidfVectorizer(
-            ngram_range=(1, 2),
+            ngram_range=(1, 1),
+            binary=True,
+            use_idf=False,
+            norm=None,
             max_features=3000,
             min_df=1,
             token_pattern=r"(?u)[가-힣A-Za-z0-9]{2,}",
         )
-        matrix = vectorizer.fit_transform(values)
-        scores = np.asarray(matrix.mean(axis=0)).ravel()
+        matrix = vectorizer.fit_transform(label_source)
+        cluster_df = np.asarray(matrix.sum(axis=0)).ravel()
         terms = vectorizer.get_feature_names_out()
-        order = scores.argsort()[::-1][:top_n]
-        selected = [terms[index] for index in order if scores[index] > 0]
+        idf = np.array([corpus_idf.get(term, 1.0) if corpus_idf else 1.0 for term in terms])
+        scores = cluster_df * idf
+        order = sorted(
+            range(len(terms)),
+            key=lambda index: (scores[index], cluster_df[index], len(terms[index]), terms[index]),
+            reverse=True,
+        )
+        selected = [
+            terms[index]
+            for index in order
+            if scores[index] > 0 and terms[index] not in GENERIC_TOPIC_TERMS
+        ][:top_n]
         return " · ".join(selected) if selected else "기타 이슈"
     except ValueError:
         return "기타 이슈"
+
+
+def _label_corpus_idf(texts: Iterable[str]) -> dict[str, float]:
+    values = list(texts)
+    if not values:
+        return {}
+    try:
+        label_source = values
+        vectorizer = TfidfVectorizer(
+            ngram_range=(1, 1),
+            binary=True,
+            use_idf=False,
+            norm=None,
+            max_features=5000,
+            min_df=1,
+            token_pattern=r"(?u)[가-힣A-Za-z0-9]{2,}",
+        )
+        matrix = vectorizer.fit_transform(label_source)
+        document_frequency = np.asarray(matrix.sum(axis=0)).ravel()
+        terms = vectorizer.get_feature_names_out()
+        article_count = max(1, len(values))
+        idf = np.log((1 + article_count) / (1 + document_frequency)) + 1
+        return {
+            term: float(score)
+            for term, score in zip(terms, idf)
+            if term not in GENERIC_TOPIC_TERMS
+        }
+    except ValueError:
+        return {}
 
 
 def _cluster_cohesion(embeddings: np.ndarray) -> float:
@@ -300,6 +347,16 @@ def _keyword_tfidf_vectors(texts: pd.Series) -> np.ndarray:
     reduced = TruncatedSVD(n_components=max_components, random_state=42).fit_transform(matrix)
     norms = np.linalg.norm(reduced, axis=1, keepdims=True)
     return np.divide(reduced, norms, out=np.zeros_like(reduced), where=norms != 0)
+
+
+def remove_repeated_keyword_templates(
+    articles: pd.DataFrame,
+    max_per_signature: int = 90,
+) -> pd.DataFrame:
+    if "cluster_text" not in articles.columns or articles.empty:
+        return articles.copy()
+    keep = articles.groupby("cluster_text", sort=False).cumcount() < max_per_signature
+    return articles.loc[keep].reset_index(drop=True)
 
 
 def _strict_centroid_groups(
@@ -460,6 +517,10 @@ def analyze_articles(
     articles = remove_exact_body_duplicates(articles, body_col="body")
 
     if fast_mode:
+        articles = remove_repeated_keyword_templates(
+            articles,
+            max_per_signature=max(60, min_cluster_size * 3),
+        )
         embeddings = _keyword_tfidf_vectors(articles["cluster_text"])
     else:
         model = _load_sentence_transformer(model_name)
@@ -513,8 +574,9 @@ def analyze_articles(
     topic_rows: list[dict[str, object]] = []
     valid = articles[articles["cluster"] >= 0]
     denominator = max(1, len(valid))
+    label_idf = _label_corpus_idf(valid["text"])
     for cluster_id, group in valid.groupby("cluster"):
-        topic_name = _topic_keywords(group["text"], top_n=5)
+        topic_name = _topic_keywords(group["text"], top_n=5, corpus_idf=label_idf)
         group_embeddings = embeddings[group.index.to_numpy()]
         cohesion_score = round(_cluster_cohesion(group_embeddings), 4)
         label_quality = _label_quality(topic_name)

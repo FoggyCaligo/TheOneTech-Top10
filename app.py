@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import inspect
 from datetime import date, timedelta
 
 import pandas as pd
@@ -28,16 +29,20 @@ def run_analysis_cached(
     fast_mode: bool,
     include_map: bool,
 ):
-    return analyze_articles(
-        data,
-        min_cluster_size=min_cluster_size,
-        duplicate_threshold=duplicate_threshold,
-        subcluster_outlier_threshold=subcluster_outlier_threshold,
-        fast_mode=fast_mode,
-        include_map=include_map,
-        title_col="title",
-        body_col="body",
-    )
+    analysis_kwargs = {
+        "min_cluster_size": min_cluster_size,
+        "duplicate_threshold": duplicate_threshold,
+        "subcluster_outlier_threshold": subcluster_outlier_threshold,
+        "fast_mode": fast_mode,
+        "include_map": include_map,
+        "title_col": "title",
+        "body_col": "body",
+    }
+    supported_params = inspect.signature(analyze_articles).parameters
+    analysis_kwargs = {
+        key: value for key, value in analysis_kwargs.items() if key in supported_params
+    }
+    return analyze_articles(data, **analysis_kwargs)
 
 
 st.title("지역 뉴스 이슈 Top 10")
@@ -224,6 +229,9 @@ else:
 if data is None or data.empty:
     st.info("기사를 수집하거나 DB 조회 기간을 조정하거나 CSV를 올려 주세요.")
     st.stop()
+
+if data is None:
+    raise SystemExit
 
 preview_data = remove_exact_body_duplicates(data, body_col="body")
 removed_exact_body_duplicates = len(data) - len(preview_data)
