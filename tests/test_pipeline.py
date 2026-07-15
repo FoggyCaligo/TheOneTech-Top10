@@ -11,6 +11,7 @@ from src.pipeline import (
     _label_quality,
     _normalize_keyword_text,
     _strict_centroid_groups,
+    _template_penalty,
     _topic_keywords,
     refine_subclusters,
     normalize_text,
@@ -166,6 +167,27 @@ def test_issue_score_discounts_loose_or_generic_clusters():
 
     assert strong > noisy
     assert noisy == 0
+
+
+def test_issue_score_discounts_template_like_clusters():
+    normal_penalty = _template_penalty(cohesion_score=0.9, template_score=0.1)
+    template_penalty = _template_penalty(cohesion_score=0.99, template_score=0.8)
+
+    normal = _issue_score(
+        article_count=100,
+        cohesion_score=0.99,
+        label_quality=1.0,
+        template_penalty=normal_penalty,
+    )
+    template_like = _issue_score(
+        article_count=100,
+        cohesion_score=0.99,
+        label_quality=1.0,
+        template_penalty=template_penalty,
+    )
+
+    assert template_penalty < normal_penalty
+    assert template_like < normal
 
 
 def test_remove_near_duplicates_drops_identical_long_body_even_with_different_titles():

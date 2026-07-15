@@ -323,14 +323,34 @@ def _label_quality(topic_name: str) -> float:
     return round(1.0 - generic_count / len(terms), 4)
 
 
-def _issue_score(article_count: int, cohesion_score: float, label_quality: float) -> float:
+def _cluster_template_score(group: pd.DataFrame) -> float:
+    if group.empty or "cluster_text" not in group.columns:
+        return 0.0
+    top_signature_share = group["cluster_text"].value_counts(normalize=True).iloc[0]
+    return round(float(np.clip(top_signature_share, 0.0, 1.0)), 4)
+
+
+def _template_penalty(cohesion_score: float, template_score: float) -> float:
+    if template_score < 0.25 and cohesion_score < 0.97:
+        return 1.0
+    repetition_penalty = 1.0 - max(0.0, template_score - 0.25) * 0.6
+    cohesion_penalty = 0.82 if cohesion_score >= 0.985 else 0.9 if cohesion_score >= 0.97 else 1.0
+    return round(float(np.clip(repetition_penalty * cohesion_penalty, 0.35, 1.0)), 4)
+
+
+def _issue_score(
+    article_count: int,
+    cohesion_score: float,
+    label_quality: float,
+    template_penalty: float = 1.0,
+) -> float:
     # Noisy labels such as "기자 · 사진" should not outrank real issue clusters
     # merely because they are large.
     if label_quality <= 0:
         return 0.0
     cohesion_factor = max(cohesion_score, 0.0) ** 1.5
     label_factor = label_quality ** 3
-    return round(article_count * cohesion_factor * label_factor, 4)
+    return round(article_count * cohesion_factor * label_factor * template_penalty, 4)
 
 
 def _keyword_tfidf_vectors(texts: pd.Series) -> np.ndarray:
@@ -580,6 +600,8 @@ def analyze_articles(
         group_embeddings = embeddings[group.index.to_numpy()]
         cohesion_score = round(_cluster_cohesion(group_embeddings), 4)
         label_quality = _label_quality(topic_name)
+        template_score = _cluster_template_score(group)
+        template_penalty = _template_penalty(cohesion_score, template_score)
         topic_rows.append(
             {
                 "cluster": int(cluster_id),
@@ -588,7 +610,14 @@ def analyze_articles(
                 "share_percent": round(len(group) / denominator * 100, 2),
                 "cohesion_score": cohesion_score,
                 "label_quality": label_quality,
-                "issue_score": _issue_score(int(len(group)), cohesion_score, label_quality),
+                "template_score": template_score,
+                "template_penalty": template_penalty,
+                "issue_score": _issue_score(
+                    int(len(group)),
+                    cohesion_score,
+                    label_quality,
+                    template_penalty=template_penalty,
+                ),
                 "representative_title": group.iloc[0]["title"],
             }
         )
