@@ -6,4 +6,6 @@ venv/
 .env
 .streamlit/secrets.toml
 outputs/
+data/*.db
+data/*.db-*
 .DS_Store
