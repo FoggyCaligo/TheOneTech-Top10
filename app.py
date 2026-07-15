@@ -5,10 +5,13 @@ from datetime import date, timedelta
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from dotenv import load_dotenv
 
 from src.bigkinds import BigKindsClient, BigKindsConfig
 from src.pipeline import analyze_articles
 
+
+load_dotenv()
 
 MAJOR_PUBLISHERS = [
     "경향신문",
